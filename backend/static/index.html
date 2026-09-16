@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Support Agent</title>
+<style>
+  :root {
+    --bg: #f7f7f5;
+    --panel: #ffffff;
+    --ink: #1a1b1e;
+    --muted: #6d7075;
+    --line: #e4e3df;
+    --accent: #2f5fd8;
+    --accent-soft: #eef2fd;
+    --warn: #b4530a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #131417; --panel: #1b1d21; --ink: #e8e7e4; --muted: #9a9ea5;
+      --line: #2b2e34; --accent: #7ea2f5; --accent-soft: #1d2740; --warn: #e0a558;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    display: flex; flex-direction: column; height: 100vh;
+  }
+  header {
+    padding: 14px 18px; border-bottom: 1px solid var(--line);
+    background: var(--panel); display: flex; gap: 12px; align-items: center;
+    flex-wrap: wrap;
+  }
+  header h1 { margin: 0; font-size: 15px; font-weight: 600; letter-spacing: -.01em; }
+  header .spacer { flex: 1; }
+  select, button, input {
+    font: inherit; color: var(--ink); background: var(--panel);
+    border: 1px solid var(--line); border-radius: 7px; padding: 7px 10px;
+  }
+  button { cursor: pointer; }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  button:disabled { opacity: .5; cursor: default; }
+  #log {
+    flex: 1; overflow-y: auto; padding: 20px 18px;
+    display: flex; flex-direction: column; gap: 14px;
+  }
+  .turn { max-width: 680px; }
+  .turn.user { align-self: flex-end; }
+  .bubble {
+    padding: 10px 13px; border-radius: 12px; white-space: pre-wrap;
+    border: 1px solid var(--line); background: var(--panel);
+  }
+  .turn.user .bubble { background: var(--accent-soft); border-color: transparent; }
+  .who {
+    font-size: 11px; text-transform: uppercase; letter-spacing: .08em;
+    color: var(--muted); margin-bottom: 4px;
+  }
+  .turn.user .who { text-align: right; }
+  .sources { font-size: 12px; color: var(--muted); margin-top: 5px; }
+  .empty { color: var(--muted); margin: auto; text-align: center; max-width: 380px; }
+  .empty code { background: var(--accent-soft); padding: 1px 5px; border-radius: 4px; }
+  form {
+    display: flex; gap: 9px; padding: 14px 18px;
+    border-top: 1px solid var(--line); background: var(--panel);
+  }
+  form input { flex: 1; }
+  .err { color: var(--warn); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Support Agent</h1>
+  <select id="who"></select>
+  <span class="spacer"></span>
+  <button id="clear" type="button">Clear conversation</button>
+</header>
+
+<div id="log">
+  <div class="empty" id="empty">
+    Pick a customer and ask something — try <code>where is my order?</code>
+    or <code>what is your refund policy?</code>
+  </div>
+</div>
+
+<form id="form">
+  <input id="q" placeholder="Ask a question…" autocomplete="off" required>
+  <button class="primary" id="send" type="submit">Send</button>
+</form>
+
+<script>
+const API = location.origin;
+const EMAILS = [
+  "john.smith@example.com",
+  "sarah.johnson@example.com",
+  "michael.williams@example.com",
+  "emily.davis@example.com",
+  "david.brown@example.com",
+];
+
+const log = document.getElementById("log");
+const empty = document.getElementById("empty");
+const who = document.getElementById("who");
+const form = document.getElementById("form");
+const qInput = document.getElementById("q");
+const sendBtn = document.getElementById("send");
+
+EMAILS.forEach(e => {
+  const o = document.createElement("option");
+  o.value = e; o.textContent = e.split("@")[0].replace(".", " ");
+  who.appendChild(o);
+});
+
+function addTurn(role, text, sources) {
+  empty.remove?.();
+  const wrap = document.createElement("div");
+  wrap.className = "turn " + role;
+  const label = document.createElement("div");
+  label.className = "who";
+  label.textContent = role === "user" ? "You" : "Agent";
+  const bubble = document.createElement("div");
+  bubble.className = "bubble";
+  bubble.textContent = text;
+  wrap.append(label, bubble);
+  if (sources?.length) {
+    const s = document.createElement("div");
+    s.className = "sources";
+    s.textContent = "Grounded in: " + sources.join(", ");
+    wrap.append(s);
+  }
+  log.append(wrap);
+  log.scrollTop = log.scrollHeight;
+  return bubble;
+}
+
+async function loadHistory() {
+  log.querySelectorAll(".turn").forEach(n => n.remove());
+  try {
+    const r = await fetch(`${API}/history/${encodeURIComponent(who.value)}`);
+    if (!r.ok) return;
+    const d = await r.json();
+    d.messages.forEach(m => addTurn(m.role === "user" ? "user" : "agent", m.content));
+  } catch (e) { /* offline is fine; start empty */ }
+}
+
+who.addEventListener("change", loadHistory);
+
+document.getElementById("clear").addEventListener("click", async () => {
+  await fetch(`${API}/history/${encodeURIComponent(who.value)}`, { method: "DELETE" });
+  loadHistory();
+});
+
+form.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const question = qInput.value.trim();
+  if (!question) return;
+  qInput.value = "";
+  addTurn("user", question);
+  sendBtn.disabled = true;
+  const pending = addTurn("agent", "Thinking…");
+
+  try {
+    const r = await fetch(`${API}/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: who.value, question }),
+    });
+    const d = await r.json();
+    if (!r.ok) {
+      pending.textContent = d.detail || "Something went wrong.";
+      pending.classList.add("err");
+    } else {
+      pending.textContent = d.answer;
+      if (d.sources_used?.length) {
+        const s = document.createElement("div");
+        s.className = "sources";
+        s.textContent = "Grounded in: " + d.sources_used.join(", ");
+        pending.parentElement.append(s);
+      }
+    }
+  } catch (err) {
+    pending.textContent = "Could not reach the API. Is the server running?";
+    pending.classList.add("err");
+  } finally {
+    sendBtn.disabled = false;
+    qInput.focus();
+    log.scrollTop = log.scrollHeight;
+  }
+});
+
+loadHistory();
+</script>
+</body>
+</html>
